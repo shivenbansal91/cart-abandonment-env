@@ -16,6 +16,7 @@ class ActionRequest(BaseModel):
 
 
 @app.get("/reset")
+@app.post("/reset")
 def reset():
     obs = env.reset()
     return obs.__dict__
