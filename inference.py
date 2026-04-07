@@ -1,27 +1,3 @@
-"""
-inference.py
-------------
-Standardized inference interface for the Cart Abandonment RL Environment.
-Satisfies hackathon requirements:
-  - Reads API_BASE_URL, MODEL_NAME, HF_TOKEN from environment variables
-  - Produces structured START / STEP / END logs
-  - Runs full episodes against the deployed API
-  - Uses trained Q-table if available, falls back to rule-based policy
-
-Usage:
-    # Local server, rule-based fallback
-    python inference.py
-
-    # Local server, use trained Q-table
-    python train_and_save.py   # generates qtable_medium.pkl etc. first
-    python inference.py
-
-    # Against HF Spaces (Windows)
-    set API_BASE_URL=https://yourname-cart-abandonment-env.hf.space
-    set DIFFICULTY=hard
-    python inference.py
-"""
-
 import os
 import sys
 import json
@@ -31,57 +7,42 @@ import logging
 import requests
 import numpy as np
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# ── Configuration ─────────────────────────────────────────
 
-API_BASE_URL = os.environ.get("API_BASE_URL",  "http://localhost:8000")
-MODEL_NAME   = os.environ.get("MODEL_NAME",    "q-learning-v1")
-HF_TOKEN     = os.environ.get("HF_TOKEN",      "")
-DIFFICULTY   = os.environ.get("DIFFICULTY",    "medium")
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+MODEL_NAME   = os.environ.get("MODEL_NAME", "q-learning-v1")
+HF_TOKEN     = os.environ.get("HF_TOKEN", "")
+DIFFICULTY   = os.environ.get("DIFFICULTY", "medium")
 NUM_EPISODES = int(os.environ.get("NUM_EPISODES", "3"))
-SEED         = int(os.environ.get("SEED",        "42"))
+SEED         = int(os.environ.get("SEED", "42"))
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+# ── Logging ───────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
 logger = logging.getLogger("inference")
 
-
 def log(event: str, **kwargs):
     logger.info(json.dumps({"event": event, "ts": round(time.time(), 3), **kwargs}))
 
-
-# ── Q-table loading ───────────────────────────────────────────────────────────
+# ── Q-table loading ───────────────────────────────────────
 
 def load_qtable(difficulty: str):
-    """
-    Try to load the saved Q-table for the given difficulty.
-    Returns None if file not found — inference falls back to rule-based policy.
-    Run train_and_save.py first to generate these files.
-    """
     path = f"qtable_{difficulty}.pkl"
     if not os.path.exists(path):
-        logger.warning(f"[inference] Q-table not found: {path} — using rule-based fallback.")
+        logger.warning(f"[inference] Q-table not found: {path} — using fallback.")
         return None
-    with open(path, "rb") as f:
-        qtable = pickle.load(f)
-    logger.info(f"[inference] Loaded Q-table: {path} ({len(qtable)} states)")
-    return qtable
+    try:
+        with open(path, "rb") as f:
+            qtable = pickle.load(f)
+        logger.info(f"[inference] Loaded Q-table: {path}")
+        return qtable
+    except Exception as e:
+        logger.warning(f"[inference] Failed to load Q-table: {e}")
+        return None
 
-
-# ── State discretization (must match agent.py exactly) ───────────────────────
+# ── State discretization ──────────────────────────────────
 
 def discretize(obs: dict) -> tuple:
-    """
-    Convert API observation dict → Q-table state tuple.
-    Must be identical to discretize_state() in agent.py.
-
-    Dimensions:
-      time_bin   : 0-2 / 3-5 / 6-8 / 9+         → 4 bins
-      value_bin  : <750 / 750-1250 / >1250        → 3 bins
-      discount   : 0 / 5 / 10 / 20               → as-is
-      prod_disc  : 0 / 5 / 10 / 20               → as-is
-      notified   : 0 or 1                         → as-is
-    """
     t = obs["time_since_abandon"]
     if t <= 2:    time_bin = 0
     elif t <= 5:  time_bin = 1
@@ -101,42 +62,33 @@ def discretize(obs: dict) -> tuple:
         int(obs.get("notified", False)),
     )
 
+# ── Action selection ──────────────────────────────────────
 
-# ── Action selection ──────────────────────────────────────────────────────────
-
-def select_action(obs: dict, qtable) -> tuple:
-    """
-    Returns (action, source) where source is 'qtable' or 'fallback'.
-
-    If Q-table loaded and state is known → greedy learned policy.
-    Otherwise → rule-based fallback so inference never crashes.
-    """
+def select_action(obs: dict, qtable):
     if qtable is not None:
         state = discretize(obs)
         if state in qtable:
             return int(np.argmax(qtable[state])), "qtable"
-        # state unseen during training → fall through
 
-    # Rule-based fallback
+    # fallback policy (never crash)
     t        = obs["time_since_abandon"]
     notified = obs.get("notified", False)
     discount = obs.get("discount_given", 0)
 
     if t < 2:
-        action = 0                     # wait
+        action = 0
     elif t < 4 and not notified:
-        action = 1                     # notify once
+        action = 1
     elif t < 7 and discount == 0:
-        action = 3                     # discount 10%
+        action = 3
     elif t >= 7 and discount < 20:
-        action = 4                     # discount 20%
+        action = 4
     else:
-        action = 0                     # nothing left to do
+        action = 0
 
     return action, "fallback"
 
-
-# ── HTTP helpers ──────────────────────────────────────────────────────────────
+# ── HTTP helpers (SAFE) ───────────────────────────────────
 
 def make_headers():
     h = {"Content-Type": "application/json"}
@@ -144,75 +96,67 @@ def make_headers():
         h["Authorization"] = f"Bearer {HF_TOKEN}"
     return h
 
-
 def api_reset():
-    r = requests.get(f"{API_BASE_URL}/reset", headers=make_headers(), timeout=10)
-    r.raise_for_status()
-    return r.json()
-
+    try:
+        r = requests.get(f"{API_BASE_URL}/reset", headers=make_headers(), timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        raise RuntimeError(f"Reset API failed: {e}")
 
 def api_step(action: int):
-    r = requests.post(f"{API_BASE_URL}/step", headers=make_headers(),
-                      json={"action": action}, timeout=10)
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = requests.post(
+            f"{API_BASE_URL}/step",
+            headers=make_headers(),
+            json={"action": action},
+            timeout=10
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        raise RuntimeError(f"Step API failed: {e}")
 
+# ── Episode runner ────────────────────────────────────────
 
-# ── Episode runner ────────────────────────────────────────────────────────────
-
-def run_episode(episode_num: int, qtable) -> dict:
+def run_episode(ep, qtable):
     obs = api_reset()
 
     log("START",
-        episode=episode_num,
+        episode=ep,
         model=MODEL_NAME,
         difficulty=DIFFICULTY,
-        cart_value=obs.get("cart_value"),
-        product_discount=obs.get("product_discount"),
         policy="qtable" if qtable else "fallback",
     )
 
-    step_num     = 0
+    steps = 0
     total_reward = 0.0
 
     while not obs.get("done", False):
         action, source = select_action(obs, qtable)
         obs = api_step(action)
-        step_num     += 1
+
+        steps += 1
         total_reward += obs.get("reward", 0.0)
 
         log("STEP",
-            episode=episode_num,
-            step=step_num,
+            episode=ep,
+            step=steps,
             action=action,
-            action_source=source,      # 'qtable' or 'fallback' per step
+            action_source=source,
             reward=round(obs.get("reward", 0.0), 4),
-            discount_given=obs.get("discount_given"),
-            notified=obs.get("notified"),
             done=obs.get("done"),
         )
 
-    purchased = total_reward > -0.5
-
     log("END",
-        episode=episode_num,
-        model=MODEL_NAME,
-        difficulty=DIFFICULTY,
-        steps=step_num,
+        episode=ep,
         total_reward=round(total_reward, 4),
-        purchased=purchased,
-        profit_score=round(max(total_reward, 0.0), 4),
+        purchased=total_reward > -0.5,
     )
 
-    return {
-        "episode":      episode_num,
-        "steps":        step_num,
-        "total_reward": total_reward,
-        "purchased":    purchased,
-    }
+    return total_reward
 
-
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Main ─────────────────────────────────────────────────
 
 def main():
     qtable = load_qtable(DIFFICULTY)
@@ -220,46 +164,20 @@ def main():
     log("START",
         event_type="run",
         model=MODEL_NAME,
-        api_base_url=API_BASE_URL,
         difficulty=DIFFICULTY,
-        num_episodes=NUM_EPISODES,
-        seed=SEED,
-        policy="qtable" if qtable else "fallback",
-        qtable_states=len(qtable) if qtable else 0,
+        api=API_BASE_URL,
     )
 
-    results, errors = [], []
+    errors = 0
 
     for ep in range(1, NUM_EPISODES + 1):
         try:
-            results.append(run_episode(ep, qtable))
-        except requests.exceptions.ConnectionError:
-            msg = f"Cannot reach API at {API_BASE_URL}. Start server: uvicorn app:app --port 8000"
-            log("END", event_type="error", episode=ep, error=msg)
-            errors.append(msg)
-            break
+            run_episode(ep, qtable)
         except Exception as e:
             log("END", event_type="error", episode=ep, error=str(e))
-            errors.append(str(e))
-
-    if results:
-        win_rate     = sum(1 for r in results if r["purchased"]) / len(results)
-        avg_reward   = sum(r["total_reward"] for r in results) / len(results)
-        profit_ratio = sum(max(r["total_reward"], 0) for r in results) / len(results)
-
-        log("END",
-            event_type="summary",
-            model=MODEL_NAME,
-            difficulty=DIFFICULTY,
-            episodes_run=len(results),
-            win_rate=round(win_rate, 3),
-            avg_reward=round(avg_reward, 4),
-            profit_ratio=round(profit_ratio, 4),
-            errors=len(errors),
-        )
+            errors += 1
 
     sys.exit(1 if errors else 0)
-
 
 if __name__ == "__main__":
     main()
