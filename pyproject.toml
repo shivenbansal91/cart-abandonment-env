@@ -1,15 +1,17 @@
-id="pyproj1"
 [project]
 name = "cart-abandonment-rl-env"
 version = "0.1.0"
-description = "Reinforcement Learning environment for cart abandonment recovery"
-authors = [
-  { name = "Shiven Bansal" }
-]
+description = "RL environment for cart abandonment"
+authors = [{ name = "Shiven Bansal" }]
+
 dependencies = [
   "fastapi",
   "uvicorn",
   "pydantic",
   "numpy",
-  "requests"
+  "requests",
+  "openenv-core>=0.2.0"
 ]
+
+[project.scripts]
+server = "server.app:app"
