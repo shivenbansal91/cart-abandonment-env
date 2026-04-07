@@ -2,12 +2,14 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import sys, os
 
+# Fix import path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from environment import CartEnvironment
 from models import CartAction
 
 app = FastAPI(title="Cart Abandonment RL Environment", version="1.0")
+
 env = CartEnvironment()
 
 
@@ -44,7 +46,18 @@ def state():
 @app.get("/")
 def root():
     return {
-        "message": "Cart Abandonment RL Environment — OpenEnv v1.0",
+        "message": "Cart Abandonment RL Environment",
         "docs": "/docs",
         "endpoints": ["/reset", "/step", "/state"]
     }
+
+
+# ✅ REQUIRED MAIN FUNCTION (for OpenEnv)
+def main():
+    import uvicorn
+    uvicorn.run("server.app:app", host="0.0.0.0", port=7860)
+
+
+# ✅ REQUIRED ENTRY POINT
+if __name__ == "__main__":
+    main()
