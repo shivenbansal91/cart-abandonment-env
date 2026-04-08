@@ -1,59 +1,63 @@
 import os
 import sys
 import requests
-from openai import OpenAI
 
-# ── Setup LLM (MANDATORY) ────────────────────────────────
+# ── LLM Proxy Config (MANDATORY) ─────────────────────────
 
-client = OpenAI(
-    base_url=os.environ["API_BASE_URL"],   # 🔥 injected by hackathon
-    api_key=os.environ["API_KEY"]
-)
+LLM_BASE_URL = os.environ.get("API_BASE_URL")
+LLM_API_KEY  = os.environ.get("API_KEY")
 
-MODEL = "gpt-4o-mini"   # safe default
+MODEL = "gpt-4o-mini"
 
-# ── Your ENV API (HF Space) ──────────────────────────────
+# ── Your ENV API ─────────────────────────────────────────
 
 ENV_URL = "https://shiven91-cart-abandonment-env.hf.space"
 
-# ── Logging (required format) ────────────────────────────
+# ── Logging (REQUIRED FORMAT) ────────────────────────────
 
 def log(event, **kwargs):
     parts = [f"{k}={v}" for k, v in kwargs.items()]
     print(f"[{event}] " + " ".join(parts), flush=True)
 
-# ── LLM Action Decision ──────────────────────────────────
+# ── LLM CALL USING REQUESTS (NO openai lib) ──────────────
 
 def get_action_from_llm(obs):
     prompt = f"""
-You are an RL agent for cart abandonment.
+You are an RL agent.
 
 Observation:
 {obs}
 
 Actions:
-0 = wait
-1 = notify
-2 = discount_5
-3 = discount_10
-4 = discount_20
+0=wait, 1=notify, 2=discount_5, 3=discount_10, 4=discount_20
 
-Return ONLY the action number (0-4).
+Return ONLY a number (0-4).
 """
 
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
+        response = requests.post(
+            f"{LLM_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {LLM_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0
+            },
+            timeout=15
         )
 
-        action = int(response.choices[0].message.content.strip())
-        return max(0, min(4, action))
+        data = response.json()
+        text = data["choices"][0]["message"]["content"].strip()
+
+        return max(0, min(4, int(text)))
+
     except:
         return 0  # fallback
 
-# ── API Calls ────────────────────────────────────────────
+# ── ENV API ──────────────────────────────────────────────
 
 def reset():
     return requests.get(f"{ENV_URL}/reset").json()
@@ -61,7 +65,7 @@ def reset():
 def step(action):
     return requests.post(f"{ENV_URL}/step", json={"action": action}).json()
 
-# ── Episode Runner ───────────────────────────────────────
+# ── Episode ──────────────────────────────────────────────
 
 def run_episode(ep):
     try:
@@ -96,7 +100,10 @@ def run_episode(ep):
 
 def main():
     for ep in range(1, 3):
-        run_episode(ep)
+        try:
+            run_episode(ep)
+        except:
+            log("END", episode=ep, total_reward=0)
 
     sys.exit(0)
 
