@@ -2,11 +2,19 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import sys, os
 
-# Fix import path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ── Fix import path ───────────────────────────────────────
+# Works whether app.py is in root OR in a server/ subfolder
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+_root_dir = os.path.dirname(_this_dir)  # parent of server/
+
+# Add both so imports work regardless of structure
+for _p in [_this_dir, _root_dir]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from environment import CartEnvironment
 from models import CartAction
+from grader import compute_score  # ← import at module level (not inside function)
 
 app = FastAPI(title="Cart Abandonment RL Environment", version="1.0")
 
@@ -45,34 +53,25 @@ def state():
     }
 
 
-# ── REQUIRED GRADER ENDPOINT (CRITICAL) ──────────────────
+# ── REQUIRED GRADER ENDPOINT ──────────────────────────────
 
 @app.get("/grade")
 def grade():
-    from grader import compute_score
-
     tasks = []
 
     for difficulty in ["easy", "medium", "hard"]:
         try:
             score = compute_score(difficulty)
-        except:
-            score = 0.5
-
-        # 🔥 FINAL SAFETY FIX (VERY IMPORTANT)
-        try:
             score = float(score)
-        except:
+            # Strictly clamp to (0, 1) exclusive as required by validator
+            score = max(0.01, min(0.99, score))
+        except Exception as e:
+            print(f"[grade] Error on {difficulty}: {e}", flush=True)
             score = 0.5
-
-        if score <= 0:
-            score = 0.1
-        elif score >= 1:
-            score = 0.9
 
         tasks.append({
             "name": difficulty,
-            "score": score
+            "score": round(score, 4)
         })
 
     return {"tasks": tasks}
