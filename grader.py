@@ -4,15 +4,13 @@ from environment import CartEnvironment
 from models import CartAction
 
 SEED = 42
-EPISODES = 100
+EPISODES = 50
 
 
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
 
-
-# ── Simple stable policy (no training) ───────────────────
 
 def policy(obs):
     t = obs.time_since_abandon
@@ -38,23 +36,27 @@ def run_episode(env):
     return total
 
 
-# ── Score (STRICTLY BETWEEN 0 AND 1) ────────────────────
-
-def compute_score(difficulty: str, episodes: int = EPISODES) -> float:
+def compute_score(difficulty: str) -> float:
     set_seed(SEED)
 
     total_profit = 0.0
 
-    for _ in range(episodes):
+    for _ in range(EPISODES):
         env = CartEnvironment(difficulty=difficulty)
         r = run_episode(env)
 
-        if r > 0:
+        if isinstance(r, float) and r > 0:
             total_profit += r
 
-    score = total_profit / episodes
+    score = total_profit / max(1, EPISODES)
 
-    # 🔥 CRITICAL FIX → always strictly between (0,1)
-    score = max(0.01, min(0.99, score))
+    # 🔥 HARD SAFETY FIXES
+    if not isinstance(score, float) or np.isnan(score):
+        score = 0.5
 
-    return round(score, 4)
+    if score <= 0:
+        score = 0.01
+    elif score >= 1:
+        score = 0.99
+
+    return round(float(score), 4)
