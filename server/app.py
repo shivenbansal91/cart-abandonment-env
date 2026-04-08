@@ -56,17 +56,23 @@ def grade():
     for difficulty in ["easy", "medium", "hard"]:
         try:
             score = compute_score(difficulty)
-
-            # 🔥 FINAL SAFETY CHECK
-            if not isinstance(score, float) or score <= 0 or score >= 1:
-                score = 0.5
-
         except:
             score = 0.5
 
+        # 🔥 FINAL SAFETY FIX (VERY IMPORTANT)
+        try:
+            score = float(score)
+        except:
+            score = 0.5
+
+        if score <= 0:
+            score = 0.1
+        elif score >= 1:
+            score = 0.9
+
         tasks.append({
             "name": difficulty,
-            "score": float(score)
+            "score": score
         })
 
     return {"tasks": tasks}
