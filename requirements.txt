@@ -3,4 +3,3 @@ uvicorn
 numpy
 matplotlib
 requests
-aiofiles
